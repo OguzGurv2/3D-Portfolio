@@ -1,34 +1,40 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-
-gsap.registerPlugin(ScrollTrigger);
 
 const FRAME_COUNT = 125;
+const SCROLL_SENSITIVITY = 3.6; // pixels of deltaY per "scroll unit"
 
 function getFrameSrc(index: number): string {
   const padded = String(index).padStart(3, "0");
   return `/render/Sequence5_${padded}.webp`;
 }
 
+interface FrameData {
+  img: HTMLImageElement;
+  iw: number;
+  ih: number;
+}
+
 export default function ScrollAnimation() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const imagesRef = useRef<HTMLImageElement[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-    const ctx = canvas.getContext("2d");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d", { desynchronized: true });
     if (!ctx) return;
 
     let cancelled = false;
+    let lastDrawnFrame = -1;
+    let fading = false; // whether auto-fade is active
 
-    // Set canvas to viewport size
+    const maxProgress = FRAME_COUNT - 1;
+    let targetProgress = 0;
+    let currentProgress = 0;
+    const LERP_SPEED = 0.08;
+
     function resizeCanvas() {
       if (!canvas) return;
       canvas.width = window.innerWidth;
@@ -36,38 +42,37 @@ export default function ScrollAnimation() {
     }
     resizeCanvas();
 
-    // Preload all images, then set up ScrollTrigger
-    const images: HTMLImageElement[] = [];
-    const frameObj = { current: 0 };
+    const frames: FrameData[] = [];
 
     const imagePromises: Promise<void>[] = [];
     for (let i = 0; i < FRAME_COUNT; i++) {
       const img = new Image();
-      images[i] = img;
       img.src = getFrameSrc(i);
       imagePromises.push(
         new Promise<void>((resolve) => {
-          if (img.complete && img.naturalWidth > 0) {
+          const onReady = async () => {
+            try { await img.decode(); } catch {}
+            frames[i] = { img, iw: img.naturalWidth, ih: img.naturalHeight };
             resolve();
+          };
+          if (img.complete && img.naturalWidth > 0) {
+            onReady();
           } else {
-            img.onload = () => resolve();
+            img.onload = () => onReady();
             img.onerror = () => resolve();
           }
         })
       );
     }
-    imagesRef.current = images;
 
-    // Draw image covering the canvas (like object-fit: cover)
     function drawFrame(index: number) {
       if (!ctx || !canvas) return;
-      const img = imagesRef.current[index];
-      if (!img || !img.complete) return;
+      const frame = frames[index];
+      if (!frame) return;
 
       const cw = canvas.width;
       const ch = canvas.height;
-      const iw = img.naturalWidth;
-      const ih = img.naturalHeight;
+      const { img, iw, ih } = frame;
 
       const scale = Math.max(cw / iw, ch / ih);
       const sw = iw * scale;
@@ -79,42 +84,93 @@ export default function ScrollAnimation() {
       ctx.drawImage(img, sx, sy, sw, sh);
     }
 
+    function render() {
+      if (!canvas) return;
+
+      // Lerp toward target
+      currentProgress += (targetProgress - currentProgress) * LERP_SPEED;
+
+      // Snap when very close to avoid endless loop
+      if (Math.abs(targetProgress - currentProgress) < 0.01) {
+        currentProgress = targetProgress;
+      }
+
+      // Frame index: 0 to 124
+      const frameIndex = Math.min(Math.round(currentProgress), FRAME_COUNT - 1);
+
+      // Only redraw if frame changed
+      if (frameIndex !== lastDrawnFrame) {
+        drawFrame(frameIndex);
+        lastDrawnFrame = frameIndex;
+      }
+
+      // Opacity: handled by CSS transition, not lerp
+      if (!fading) {
+        canvas.style.opacity = "1";
+      }
+
+      // Keep looping if not settled
+      if (Math.abs(targetProgress - currentProgress) > 0.01) {
+        requestAnimationFrame(render);
+      }
+    }
+
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      const delta = e.deltaY / (100 / SCROLL_SENSITIVITY);
+
+      // Already at last frame
+      if (currentProgress >= FRAME_COUNT - 1 && delta > 0) {
+        // One scroll down triggers fade
+        if (!fading) {
+          fading = true;
+          if (canvas) {
+            canvas.style.transition = "opacity 1.5s ease";
+            canvas.style.opacity = "0";
+          }
+        }
+        return;
+      }
+
+      // Scrolling back up while faded
+      if (fading && delta < 0) {
+        fading = false;
+        if (canvas) {
+          canvas.style.transition = "opacity 1.5s ease";
+          canvas.style.opacity = "1";
+        }
+        return;
+      }
+
+      targetProgress = Math.max(0, Math.min(maxProgress, targetProgress + delta));
+      requestAnimationFrame(render);
+    }
+
     function onResize() {
       resizeCanvas();
-      drawFrame(Math.round(frameObj.current));
+      lastDrawnFrame = -1;
+      render();
     }
+
     window.addEventListener("resize", onResize);
 
-    // Wait for all images, then init
     Promise.all(imagePromises).then(() => {
       if (cancelled) return;
       setLoading(false);
-      drawFrame(0);
-
-      gsap.to(frameObj, {
-        current: FRAME_COUNT - 1,
-        ease: "none",
-        scrollTrigger: {
-          trigger: container,
-          start: "top top",
-          end: "bottom top",
-          scrub: 0.5,
-          pin: canvas,
-        },
-        onUpdate: () => drawFrame(Math.round(frameObj.current)),
-      });
+      requestAnimationFrame(() => drawFrame(0));
+      window.addEventListener("wheel", onWheel, { passive: false });
     });
 
     return () => {
       cancelled = true;
-      ScrollTrigger.getAll().forEach((t) => t.kill());
-      gsap.killTweensOf(frameObj);
+      window.removeEventListener("wheel", onWheel);
       window.removeEventListener("resize", onResize);
+      if (canvas) canvas.style.opacity = "1";
     };
   }, []);
 
   return (
-    <div ref={containerRef} style={{ height: "600vh", position: "relative" }}>
+    <div style={{ position: "fixed", inset: 0 }}>
       {loading && (
         <div
           style={{
