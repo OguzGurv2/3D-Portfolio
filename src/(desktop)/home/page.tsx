@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import CRTScreen from "../../_components/BackgroundScreen";
 
 interface Window {
@@ -9,7 +9,7 @@ interface Window {
   content: React.ReactNode;
   x: number;
   y: number;
-  minimised: boolean;
+  closed: boolean;
 }
 
 const INITIAL_WINDOWS: Window[] = [
@@ -21,6 +21,7 @@ const INITIAL_WINDOWS: Window[] = [
         <p className="text-accent-green">► Who am I?</p>
         <p className="text-accent-green/80">
           Junior Full-stack developer based in Eskişehir.
+          <br />
           I build interactive web experiences that blur the line
           between design and engineering.
         </p>
@@ -32,7 +33,7 @@ const INITIAL_WINDOWS: Window[] = [
     ),
     x: 60,
     y: 60,
-    minimised: false,
+    closed: false,
   },
   {
     id: "projects",
@@ -45,7 +46,7 @@ const INITIAL_WINDOWS: Window[] = [
     ),
     x: 180,
     y: 100,
-    minimised: true,
+    closed: true,
   },
   {
     id: "skills",
@@ -58,7 +59,7 @@ const INITIAL_WINDOWS: Window[] = [
     ),
     x: 300,
     y: 140,
-    minimised: true,
+    closed: true,
   },
   {
     id: "contact",
@@ -71,24 +72,52 @@ const INITIAL_WINDOWS: Window[] = [
     ),
     x: 420,
     y: 180,
-    minimised: true,
+    closed: true,
   },
 ];
 
 function WindowFrame({
   win,
   onClose,
-  onMinimise,
   onFocus,
+  onMove,
   zIndex,
 }: {
   win: Window;
   onClose: () => void;
-  onMinimise: () => void;
   onFocus: () => void;
+  onMove: (dx: number, dy: number) => void;
   zIndex: number;
 }) {
-  if (win.minimised) return null;
+  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
+
+  const handleTitleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      onFocus();
+      dragOrigin.current = { x: e.clientX, y: e.clientY };
+
+      const handleMouseMove = (ev: MouseEvent) => {
+        if (!dragOrigin.current) return;
+        const dx = ev.clientX - dragOrigin.current.x;
+        const dy = ev.clientY - dragOrigin.current.y;
+        dragOrigin.current = { x: ev.clientX, y: ev.clientY };
+        onMove(dx, dy);
+      };
+
+      const handleMouseUp = () => {
+        dragOrigin.current = null;
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [onFocus, onMove],
+  );
+
+  if (win.closed) return null;
 
   return (
     <div
@@ -96,18 +125,15 @@ function WindowFrame({
       style={{ left: win.x, top: win.y, zIndex }}
       onMouseDown={onFocus}
     >
-      {/* Title bar */}
-      <div className="flex items-center justify-between border-b border-accent-green/30 bg-accent-green/10 px-3 py-1">
+      {/* Title bar — drag handle */}
+      <div
+        className="flex cursor-grab items-center justify-between border-b border-accent-green/30 bg-accent-green/10 px-3 py-1 active:cursor-grabbing"
+        onMouseDown={handleTitleMouseDown}
+      >
         <span className="text-[14px] tracking-widest text-accent-green [text-shadow:0_0_6px_var(--color-accent-green)]">
           {win.title}
         </span>
         <div className="flex gap-2">
-          <button
-            onClick={onMinimise}
-            className="px-2 text-[13px] text-accent-green/60 hover:text-accent-green"
-          >
-            _
-          </button>
           <button
             onClick={onClose}
             className="px-2 text-[13px] text-accent-green/60 hover:text-red-400"
@@ -138,26 +164,28 @@ export default function Desktop() {
   }
 
   function closeWindow(id: string) {
-    setWindows((prev) => prev.filter((w) => w.id !== id));
-  }
-
-  function toggleMinimise(id: string) {
     setWindows((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, minimised: !w.minimised } : w)),
+      prev.map((w) => (w.id === id ? { ...w, closed: true } : w)),
     );
   }
 
   function openWindow(id: string) {
     setWindows((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, minimised: false } : w)),
+      prev.map((w) => (w.id === id ? { ...w, closed: false } : w)),
     );
     focusWindow(id);
+  }
+
+  function moveWindow(id: string, dx: number, dy: number) {
+    setWindows((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, x: w.x + dx, y: w.y + dy } : w)),
+    );
   }
 
   return (
     <CRTScreen>
       {/* Desktop area */}
-      <div className="relative h-screen w-screen overflow-hidden">
+      <div className="relative h-full w-full overflow-hidden">
         {/* Desktop label */}
         <p className="absolute left-6 top-5 text-[12px] tracking-[0.2em] text-accent-green/30">
           OG-OS DESKTOP v1.0
@@ -170,27 +198,26 @@ export default function Desktop() {
             win={win}
             zIndex={focusOrder.indexOf(win.id) + 10}
             onClose={() => closeWindow(win.id)}
-            onMinimise={() => toggleMinimise(win.id)}
             onFocus={() => focusWindow(win.id)}
+            onMove={(dx, dy) => moveWindow(win.id, dx, dy)}
           />
         ))}
 
         {/* Taskbar */}
-        <div className="absolute bottom-0 left-0 right-0 flex items-center gap-2 border-t border-accent-green/30 bg-[#0c0c0c] px-4 py-1">
+        <div className="absolute bottom-0 left-0 right-0 flex items-center gap-2 border-t border-accent-green/30 bg-[#0c0c0c] px-15 py-1">
           <span className="mr-3 text-[13px] tracking-widest text-accent-green [text-shadow:0_0_6px_var(--color-accent-green)]">
             OG-OS
           </span>
           <span className="mr-3 h-4 w-px bg-accent-green/30" />
           {INITIAL_WINDOWS.map((win) => {
             const current = windows.find((w) => w.id === win.id);
-            const isOpen = !!current;
-            const isMin = current?.minimised ?? false;
+            const isOpen = !!current && !current.closed;
             return (
               <button
                 key={win.id}
-                onClick={() => (isOpen ? toggleMinimise(win.id) : openWindow(win.id))}
+                onClick={() => (isOpen ? closeWindow(win.id) : openWindow(win.id))}
                 className={`border px-3 py-0.5 text-[13px] tracking-wider transition-colors ${
-                  isOpen && !isMin
+                  isOpen
                     ? "border-accent-green/60 text-accent-green"
                     : "border-accent-green/20 text-accent-green/40 hover:border-accent-green/50 hover:text-accent-green/80"
                 }`}

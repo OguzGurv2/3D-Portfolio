@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import CRTScreen from "./BackgroundScreen";
 
 const SYSTEM_LINES = [
-  "OG-OS  v1.0.0  [Build 1999]",
+  "OG-OS  v1.0.0  [Build 2004]",
   "Copyright (C) Oguz Gur. All rights reserved.",
   "",
   "Checking system integrity........  OK",
@@ -91,6 +91,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
 
   return (
     <CRTScreen>
+      <div className="flex h-full w-full items-center justify-center">
       <div className="w-[min(560px,90vw)] font-[var(--font-body),monospace] text-accent-green [text-shadow:0_0_4px_var(--color-accent-green),0_0_10px_rgba(0,255,133,0.25)]">
 
         {/* Boot log */}
@@ -148,6 +149,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
             )}
           </div>
         )}
+      </div>
       </div>
     </CRTScreen>
   );

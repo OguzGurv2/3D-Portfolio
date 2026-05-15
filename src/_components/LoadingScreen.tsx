@@ -16,7 +16,7 @@ export default function LoadingScreen() {
       />
 
       {/* Text — top left */}
-      <p className="fixed left-8 top-8 z-50 flex text-[28px] text-accent-green animate-[text-glitch-idle_5s_ease-in-out_infinite] [text-shadow:0_0_4px_var(--color-accent-green),0_0_10px_rgba(0,255,133,0.25)]">
+      <p className="fixed left-8 top-8 z-50 flex text-[28px] text-accent-green animate-[text-glitch-in_1.2s_ease-out_1,text-glitch-idle_5s_ease-in-out_1.2s_infinite] [text-shadow:0_0_4px_var(--color-accent-green),0_0_10px_rgba(0,255,133,0.25)]">
         Loading
         <span className="inline-flex w-[1.8em] justify-start" aria-hidden="true">
           <span className="opacity-100">.</span>

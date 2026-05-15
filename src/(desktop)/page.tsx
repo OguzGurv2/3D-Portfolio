@@ -41,7 +41,11 @@ export default function DesktopPage() {
   }
 
   if (phase === "scroll")
-    return <ScrollAnimation onComplete={handleScrollComplete} />;
+    return (
+      <div className="fixed inset-0 z-50">
+        <ScrollAnimation onComplete={handleScrollComplete} />
+      </div>
+    );
 
   if (phase === "loading")
     return <LoadingScreen />;
