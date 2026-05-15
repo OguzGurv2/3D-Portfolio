@@ -1,22 +1,12 @@
-"use client";
+import { headers } from "next/headers";
+import DesktopPage from "@/(desktop)/page";
+import MobilePage from "@/(mobile)/page";
 
-import { useState } from "react";
+export default async function Root() {
+  const headersList = await headers();
+  const ua = headersList.get("user-agent") ?? "";
 
-import LoadingScreen from "@/components/LoadingScreen";
-import ScrollAnimation from "@/components/ScrollAnimation";
+  const isMobile = /android|iphone|ipad|ipod|mobile|blackberry|opera mini|iemobile/i.test(ua);
 
-export default function Home() {
-  const [showLoadingScreen, setShowLoadingScreen] = useState(false);
-
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[#121212] text-[#ededed]">
-      {showLoadingScreen ? (
-        <LoadingScreen />
-      ) : (
-        <ScrollAnimation onComplete={() => setShowLoadingScreen(true)} />
-      )}
-    </main>
-  );
+  return isMobile ? <MobilePage /> : <DesktopPage />;
 }
-
-

@@ -1,4 +1,4 @@
-export default function CRTScreen({ children }: { children: React.ReactNode }) {
+export default function BackgroundScreen({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-[#0c0c0c]">
       {/* Phosphor bloom — ambient green glow behind content */}
@@ -19,7 +19,7 @@ export default function CRTScreen({ children }: { children: React.ReactNode }) {
       {/* Fisheye vignette — heavy radial dark rim simulates curved CRT glass */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-20 [background:radial-gradient(ellipse_68%_68%_at_50%_50%,transparent_38%,rgba(0,0,0,0.97)_100%)]"
+        className="pointer-events-none absolute inset-0 z-20 [background:radial-gradient(ellipse_68%_68%_at_50%_50%,transparent_38%,rgba(0,0,0,0.77)_100%)]"
       />
 
       {/* Screen-curve edge glow — thin convex highlight at the rim */}
