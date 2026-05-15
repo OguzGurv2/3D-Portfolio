@@ -1,8 +1,13 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { VT323 } from "next/font/google";
+import "bootstrap-icons/font/bootstrap-icons.css";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const vt323 = VT323({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-body",
+});
 
 export const metadata: Metadata = {
   title: "OG | Home",
@@ -16,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={vt323.variable}>{children}</body>
     </html>
   );
 }
