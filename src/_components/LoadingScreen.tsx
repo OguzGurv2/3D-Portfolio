@@ -1,21 +1,9 @@
 "use client";
 
-/**
- * LoadingScreen — Three.js / WebGL version.
- *
- * All content is drawn to an offscreen Canvas 2D context which feeds the CRT
- * barrel-distortion shader as a CanvasTexture. No HTML/CSS UI elements.
- */
-
-import { useEffect, useRef } from "react";
-import { getRenderer } from "./three/renderer";
-import { createCRTMaterial } from "./three/CRTMaterial";
+import { useRef } from "react";
 import CRTScreen from "./CRTScreen";
-import * as THREE from "three";
-
-const ACCENT = "#00ff85";
-const BG     = "#0c0c0c";
-const FONT   = "VT323, monospace";
+import { useCRTCanvas } from "./three/useCRTCanvas";
+import { ACCENT, BG, FONT } from "../_constants/crt";
 
 function drawLoading(
   ctx: CanvasRenderingContext2D,
@@ -45,73 +33,15 @@ function drawLoading(
 
 export default function LoadingScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef   = useRef({ dots: 0, lastDotTime: 0 });
 
-  useEffect(() => {
-    const glCanvas = canvasRef.current;
-    if (!glCanvas) return;
-
-    const renderer = getRenderer(glCanvas);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-
-    const scene  = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-    const off   = document.createElement("canvas");
-    off.width   = window.innerWidth;
-    off.height  = window.innerHeight;
-    const ctx2d = off.getContext("2d")!;
-
-    const tex = new THREE.CanvasTexture(off);
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-
-    const mat  = createCRTMaterial(tex);
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(mesh);
-
-    let raf = 0;
-    let cancelled = false;
-    let dots = 0;
-    let lastDotTime = 0;
-
-    function loop(t: number) {
-      if (cancelled) return;
-      raf = requestAnimationFrame(loop);
-
-      if (t - lastDotTime > 400) {
-        dots = (dots + 1) % 4;
-        lastDotTime = t;
-      }
-
-      const w = off.width;
-      const h = off.height;
-      ctx2d.clearRect(0, 0, w, h);
-      drawLoading(ctx2d, w, h, dots);
-      tex.needsUpdate = true;
-      mat.uniforms.u_time.value = t * 0.001;
-      mat.uniforms.u_res.value.set(w, h);
-      renderer.render(scene, camera);
+  useCRTCanvas(canvasRef, (ctx, w, h, t) => {
+    const ms = t * 1000;
+    if (ms - animRef.current.lastDotTime > 400) {
+      animRef.current.dots = (animRef.current.dots + 1) % 4;
+      animRef.current.lastDotTime = ms;
     }
-    raf = requestAnimationFrame(loop);
-
-    function onResize() {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      renderer.setSize(w, h);
-      off.width  = w;
-      off.height = h;
-    }
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", onResize);
-      tex.dispose();
-      mat.dispose();
-      mesh.geometry.dispose();
-      renderer.dispose();
-    };
+    drawLoading(ctx, w, h, animRef.current.dots);
   }, []);
 
   return (

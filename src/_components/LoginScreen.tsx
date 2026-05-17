@@ -1,17 +1,13 @@
 "use client";
 
-/**
- * LoginScreen — Three.js / WebGL version.
- *
- * State machine (boot → show → type → auth) drives Canvas 2D draw calls.
- * The offscreen canvas feeds the CRT barrel shader as a CanvasTexture.
- */
-
 import { useState, useEffect, useRef } from "react";
-import { getRenderer } from "./three/renderer";
-import { createCRTMaterial } from "./three/CRTMaterial";
 import CRTScreen from "./CRTScreen";
-import * as THREE from "three";
+import { useCRTCanvas } from "./three/useCRTCanvas";
+import { ACCENT, BG, FONT } from "../_constants/crt";
+
+const ACCENT60 = "rgba(0,255,133,0.6)";
+const ACCENT70 = "rgba(0,255,133,0.7)";
+const ACCENT40 = "rgba(0,255,133,0.4)";
 
 const SYSTEM_LINES = [
   "OG-OS  v1.0.0  [Build 2004]",
@@ -47,6 +43,10 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
   const [typedUser, setTypedUser] = useState("");
   const [typedPass, setTypedPass] = useState("");
   const [authIndex, setAuthIndex] = useState(0);
+
+  // Keep latest onLogin callback without re-running effects
+  const onLoginRef = useRef(onLogin);
+  useEffect(() => { onLoginRef.current = onLogin; });
 
   // Boot sequence
   useEffect(() => {
@@ -93,9 +93,9 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
       const t = setTimeout(() => setAuthIndex((n) => n + 1), 340);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => onLogin(), 700);
+    const t = setTimeout(() => onLoginRef.current(), 700);
     return () => clearTimeout(t);
-  }, [phase, authIndex, onLogin]);
+  }, [phase, authIndex]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -105,173 +105,104 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
     stateRef.current = { phase, bootLine, typedUser, typedPass, authIndex };
   });
 
-  // ── Three.js CRT render loop ─────────────────────────────────────────────
-  useEffect(() => {
-    const glCanvas = canvasRef.current;
-    if (!glCanvas) return;
+  useCRTCanvas(canvasRef, (ctx, w, h, t) => {
+    const { phase: ph, bootLine: bl, typedUser: tu, typedPass: tp, authIndex: ai } = stateRef.current;
 
-    const renderer = getRenderer(glCanvas);
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    const cx    = w / 2;
+    const panelW = Math.min(560, w * 0.9);
+    const panelX = cx - panelW / 2;
+    const lh    = Math.round(h * 0.036);
+    const sz17  = Math.round(h * 0.030);
+    const sz20  = Math.round(h * 0.035);
+    const blink = Math.floor(t * 1.4) % 2 === 0;
 
-    const scene  = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, w, h);
 
-    const off   = document.createElement("canvas");
-    off.width   = window.innerWidth;
-    off.height  = window.innerHeight;
-    const ctx   = off.getContext("2d")!;
+    // Phosphor bloom
+    const bloom = ctx.createRadialGradient(cx, h / 2, 0, cx, h / 2, w * 0.55);
+    bloom.addColorStop(0, "rgba(0,255,133,0.07)");
+    bloom.addColorStop(1, "transparent");
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, w, h);
 
-    const tex = new THREE.CanvasTexture(off);
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
+    // ── Boot log box ─────────────────────────────────────
+    const boxY  = Math.round(h * 0.28);
+    const boxPx = Math.round(panelW * 0.045);
+    const boxPy = Math.round(lh * 0.5);
 
-    const mat  = createCRTMaterial(tex);
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(mesh);
+    ctx.strokeStyle = "rgba(0,255,133,0.4)";
+    ctx.lineWidth   = 1;
+    ctx.strokeRect(panelX, boxY, panelW, (SYSTEM_LINES.length + 1) * lh + boxPy * 2);
 
-    const ACCENT   = "#00ff85";
-    const ACCENT60 = "rgba(0,255,133,0.6)";
-    const ACCENT70 = "rgba(0,255,133,0.7)";
-    const ACCENT40 = "rgba(0,255,133,0.4)";
-    const BG       = "#0c0c0c";
-    const FONT     = "VT323, monospace";
+    ctx.font        = `${sz17}px ${FONT}`;
+    ctx.fillStyle   = ACCENT;
+    ctx.shadowBlur  = 8;
+    ctx.shadowColor = "rgba(0,255,133,0.3)";
 
-    function draw(t: number) {
-      const w = off.width;
-      const h = off.height;
-      const { phase: ph, bootLine: bl, typedUser: tu, typedPass: tp, authIndex: ai } = stateRef.current;
+    for (let i = 0; i < bl; i++) {
+      const line = SYSTEM_LINES[i];
+      ctx.fillText(line || "", panelX + boxPx, boxY + boxPy + (i + 1) * lh);
+    }
 
-      const cx    = w / 2;
-      const panelW = Math.min(560, w * 0.9);
-      const panelX = cx - panelW / 2;
-      const lh    = Math.round(h * 0.036);
-      const sz17  = Math.round(h * 0.030);
-      const sz20  = Math.round(h * 0.035);
-      const blink = Math.floor(t * 1.4) % 2 === 0;
+    if (ph === "boot" && blink) {
+      ctx.fillText("█", panelX + boxPx, boxY + boxPy + (bl + 1) * lh);
+    }
+    ctx.shadowBlur = 0;
 
-      ctx.fillStyle = BG;
-      ctx.fillRect(0, 0, w, h);
+    // ── Login section ────────────────────────────────────
+    if (ph !== "boot") {
+      const loginY = boxY + (SYSTEM_LINES.length + 2) * lh + boxPy * 2 + Math.round(lh * 0.8);
 
-      // Phosphor bloom
-      const bloom = ctx.createRadialGradient(cx, h / 2, 0, cx, h / 2, w * 0.55);
-      bloom.addColorStop(0, "rgba(0,255,133,0.07)");
-      bloom.addColorStop(1, "transparent");
-      ctx.fillStyle = bloom;
-      ctx.fillRect(0, 0, w, h);
+      ctx.font        = `${sz20}px ${FONT}`;
+      ctx.fillStyle   = ACCENT60;
+      ctx.shadowBlur  = 6;
+      ctx.shadowColor = "rgba(0,255,133,0.3)";
+      ctx.fillText("\u2500\u2500 USER IDENTIFICATION \u2500\u2500", panelX, loginY);
+      ctx.shadowBlur  = 0;
 
-      // ── Boot log box ─────────────────────────────────────
-      const boxY  = Math.round(h * 0.28);
-      const boxPx = Math.round(panelW * 0.045);
-      const boxPy = Math.round(lh * 0.5);
+      const row1Y  = loginY + lh * 1.8;
+      const row2Y  = row1Y + lh * 1.4;
+      const labelW = Math.round(panelW * 0.23);
 
-      ctx.strokeStyle = "rgba(0,255,133,0.4)";
-      ctx.lineWidth   = 1;
-      ctx.strokeRect(panelX, boxY, panelW, (SYSTEM_LINES.length + 1) * lh + boxPy * 2);
-
-      ctx.font        = `${sz17}px ${FONT}`;
-      ctx.fillStyle   = ACCENT;
+      // Username
+      ctx.font      = `${sz20}px ${FONT}`;
+      ctx.fillStyle = ACCENT70;
+      ctx.fillText("USERNAME", panelX, row1Y);
+      ctx.fillStyle = ACCENT40;
+      ctx.fillText(":", panelX + labelW, row1Y);
+      ctx.fillStyle = ACCENT;
       ctx.shadowBlur  = 8;
       ctx.shadowColor = "rgba(0,255,133,0.3)";
-
-      for (let i = 0; i < bl; i++) {
-        const line = SYSTEM_LINES[i];
-        ctx.fillText(line || "", panelX + boxPx, boxY + boxPy + (i + 1) * lh);
+      ctx.fillText(tu, panelX + labelW + Math.round(lh * 0.6), row1Y);
+      if (ph === "type" && tu.length < USERNAME.length && blink) {
+        ctx.fillText("█", panelX + labelW + Math.round(lh * 0.6) + ctx.measureText(tu).width, row1Y);
       }
 
-      if (ph === "boot" && blink) {
-        ctx.fillText("█", panelX + boxPx, boxY + boxPy + (bl + 1) * lh);
+      // Password
+      ctx.fillStyle = ACCENT70;
+      ctx.shadowBlur = 0;
+      ctx.fillText("PASSWORD", panelX, row2Y);
+      ctx.fillStyle = ACCENT40;
+      ctx.fillText(":", panelX + labelW, row2Y);
+      ctx.fillStyle = ACCENT;
+      ctx.shadowBlur  = 8;
+      ctx.fillText(tp, panelX + labelW + Math.round(lh * 0.6), row2Y);
+      if (ph === "type" && tu.length >= USERNAME.length && tp.length < PASSWORD.length && blink) {
+        ctx.fillText("█", panelX + labelW + Math.round(lh * 0.6) + ctx.measureText(tp).width, row2Y);
       }
       ctx.shadowBlur = 0;
 
-      // ── Login section ────────────────────────────────────
-      if (ph !== "boot") {
-        const loginY = boxY + (SYSTEM_LINES.length + 2) * lh + boxPy * 2 + Math.round(lh * 0.8);
-
-        ctx.font        = `${sz20}px ${FONT}`;
-        ctx.fillStyle   = ACCENT60;
-        ctx.shadowBlur  = 6;
+      // Auth message
+      if (ph === "auth") {
+        ctx.font        = `${sz17}px ${FONT}`;
+        ctx.fillStyle   = ACCENT;
+        ctx.shadowBlur  = 8;
         ctx.shadowColor = "rgba(0,255,133,0.3)";
-        ctx.fillText("\u2500\u2500 USER IDENTIFICATION \u2500\u2500", panelX, loginY);
+        ctx.fillText(AUTH_MESSAGES[ai], panelX, row2Y + lh * 1.6);
         ctx.shadowBlur  = 0;
-
-        const row1Y = loginY + lh * 1.8;
-        const row2Y = row1Y + lh * 1.4;
-        const labelW = Math.round(panelW * 0.23);
-
-        // Username
-        ctx.font      = `${sz20}px ${FONT}`;
-        ctx.fillStyle = ACCENT70;
-        ctx.fillText("USERNAME", panelX, row1Y);
-        ctx.fillStyle = ACCENT40;
-        ctx.fillText(":", panelX + labelW, row1Y);
-        ctx.fillStyle = ACCENT;
-        ctx.shadowBlur  = 8;
-        ctx.shadowColor = "rgba(0,255,133,0.3)";
-        ctx.fillText(tu, panelX + labelW + Math.round(lh * 0.6), row1Y);
-        if (ph === "type" && tu.length < USERNAME.length && blink) {
-          ctx.fillText("█", panelX + labelW + Math.round(lh * 0.6) + ctx.measureText(tu).width, row1Y);
-        }
-
-        // Password
-        ctx.fillStyle = ACCENT70;
-        ctx.shadowBlur = 0;
-        ctx.fillText("PASSWORD", panelX, row2Y);
-        ctx.fillStyle = ACCENT40;
-        ctx.fillText(":", panelX + labelW, row2Y);
-        ctx.fillStyle = ACCENT;
-        ctx.shadowBlur  = 8;
-        ctx.fillText(tp, panelX + labelW + Math.round(lh * 0.6), row2Y);
-        if (ph === "type" && tu.length >= USERNAME.length && tp.length < PASSWORD.length && blink) {
-          ctx.fillText("█", panelX + labelW + Math.round(lh * 0.6) + ctx.measureText(tp).width, row2Y);
-        }
-        ctx.shadowBlur = 0;
-
-        // Auth message
-        if (ph === "auth") {
-          ctx.font        = `${sz17}px ${FONT}`;
-          ctx.fillStyle   = ACCENT;
-          ctx.shadowBlur  = 8;
-          ctx.shadowColor = "rgba(0,255,133,0.3)";
-          ctx.fillText(AUTH_MESSAGES[ai], panelX, row2Y + lh * 1.6);
-          ctx.shadowBlur  = 0;
-        }
       }
     }
-
-    let raf = 0;
-    let cancelled = false;
-
-    function loop(t: number) {
-      if (cancelled) return;
-      raf = requestAnimationFrame(loop);
-      ctx.clearRect(0, 0, off.width, off.height);
-      draw(t * 0.001);
-      tex.needsUpdate = true;
-      mat.uniforms.u_time.value = t * 0.001;
-      mat.uniforms.u_res.value.set(off.width, off.height);
-      renderer.render(scene, camera);
-    }
-    raf = requestAnimationFrame(loop);
-
-    function onResize() {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      renderer.setSize(w, h);
-      off.width  = w;
-      off.height = h;
-    }
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", onResize);
-      tex.dispose();
-      mat.dispose();
-      mesh.geometry.dispose();
-      renderer.dispose();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

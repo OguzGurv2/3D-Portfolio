@@ -8,15 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@types/three':
-        specifier: ^0.184.1
-        version: 0.184.1
       bootstrap-icons:
         specifier: ^1.13.1
         version: 1.13.1
-      gsap:
-        specifier: ^3.14.2
-        version: 3.14.2
       next:
         specifier: ^15.2.0
         version: 15.5.14(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -42,6 +36,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.0
         version: 19.2.3(@types/react@19.2.14)
+      '@types/three':
+        specifier: ^0.184.1
+        version: 0.184.1
       postcss:
         specifier: ^8.5.14
         version: 8.5.14
@@ -434,9 +431,6 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
-
-  gsap@3.14.2:
-    resolution: {integrity: sha512-P8/mMxVLU7o4+55+1TCnQrPmgjPKnwkzkXOK1asnR9Jg2lna4tEY5qBJjMmAaOBDDZWtlRjBXjLa0w53G/uBLA==}
 
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
@@ -888,8 +882,6 @@ snapshots:
   fflate@0.8.3: {}
 
   graceful-fs@4.2.11: {}
-
-  gsap@3.14.2: {}
 
   jiti@2.7.0: {}
 

@@ -13,7 +13,7 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { getRenderer } from "./renderer";
+import { createRenderer } from "./renderer";
 import { createCRTMaterial } from "./CRTMaterial";
 
 export interface CRTCanvasHandle {
@@ -25,7 +25,7 @@ export interface CRTCanvasHandle {
 
 export function useCRTCanvas(
   glCanvasRef: React.RefObject<HTMLCanvasElement | null>,
-  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number, t: number) => void,
   deps: unknown[],
 ) {
   const handleRef = useRef<CRTCanvasHandle | null>(null);
@@ -38,7 +38,7 @@ export function useCRTCanvas(
     if (!glCanvas) return;
 
     // ── Three.js scene ────────────────────────────────────────────────────
-    const renderer = getRenderer(glCanvas);
+    const renderer = createRenderer(glCanvas);
     renderer.setSize(window.innerWidth, window.innerHeight);
 
     const scene  = new THREE.Scene();
@@ -77,7 +77,7 @@ export function useCRTCanvas(
 
       // Redraw 2D content
       ctx2d.clearRect(0, 0, w, h);
-      drawRef.current(ctx2d, w, h);
+      drawRef.current(ctx2d, w, h, t * 0.001);
       tex.needsUpdate = true;
 
       // Update shader uniforms
@@ -106,6 +106,7 @@ export function useCRTCanvas(
       tex.dispose();
       mat.dispose();
       mesh.geometry.dispose();
+      renderer.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [glCanvasRef, ...deps]);

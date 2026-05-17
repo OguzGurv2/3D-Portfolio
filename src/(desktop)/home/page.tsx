@@ -1,19 +1,9 @@
 "use client";
 
-/**
- * Desktop — Three.js / WebGL version.
- *
- * The entire UI (desktop label, draggable windows, taskbar) is drawn with
- * Canvas 2D API onto an offscreen canvas that feeds a CRT barrel-distortion
- * CanvasTexture. Mouse events on the WebGL canvas are mapped back to logical
- * screen coordinates so dragging and clicking work correctly.
- */
-
 import { useEffect, useRef } from "react";
-import { getRenderer } from "../../_components/three/renderer";
-import { createCRTMaterial } from "../../_components/three/CRTMaterial";
+import { useCRTCanvas } from "../../_components/three/useCRTCanvas";
 import CRTScreen from "../../_components/CRTScreen";
-import * as THREE from "three";
+import { ACCENT, BG, FONT, BARREL_K } from "../../_constants/crt";
 
 // ── Window data ────────────────────────────────────────────────────────────
 interface WinData {
@@ -75,11 +65,8 @@ const TITLEBAR_H   = 26;
 const LINE_H       = 26;
 const WIN_PAD      = 14;
 const WIN_MIN_W    = 320;
-const FONT         = "VT323, monospace";
-const ACCENT       = "#00ff85";
 const ACCENT_DIM   = "rgba(0,255,133,0.4)";
 const ACCENT30     = "rgba(0,255,133,0.3)";
-const BG           = "#0c0c0c";
 const WIN_BG       = "#0c0c0c";
 const TITLEBAR_BG  = "rgba(0,255,133,0.1)";
 const WIN_BORDER   = "rgba(0,255,133,0.5)";
@@ -277,253 +264,196 @@ function inRect(px: number, py: number, r: { x: number; y: number; w: number; h:
 export default function Desktop() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // All mutable render state as refs — no re-renders needed
+  const winsRef       = useRef<WinData[]>(
+    INITIAL_WINS.map(w => ({ ...w, lines: w.lines.map(l => [...l] as [string, string]) })),
+  );
+  const focusOrderRef = useRef<string[]>(INITIAL_WINS.map(w => w.id));
+  const clockRef      = useRef(new Date().toLocaleTimeString());
+  const hoverBtnRef   = useRef<string | null>(null);
+  const draggingRef   = useRef<{ id: string; ox: number; oy: number; startX: number; startY: number } | null>(null);
+
+  // Clock ticker
+  useEffect(() => {
+    const id = setInterval(() => { clockRef.current = new Date().toLocaleTimeString(); }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleRef = useCRTCanvas(canvasRef, (ctx, cw, ch, t) => {
+    const wins       = winsRef.current;
+    const focusOrder = focusOrderRef.current;
+
+    // Animate window body open
+    for (const w of wins) {
+      if (!w.closed && w.openAnim < 1) {
+        w.openAnim = Math.min(1, w.openAnim + 0.04);
+      }
+    }
+
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Phosphor bloom
+    const bloom = ctx.createRadialGradient(cw / 2, ch / 2, 0, cw / 2, ch / 2, cw * 0.55);
+    bloom.addColorStop(0, "rgba(0,255,133,0.07)");
+    bloom.addColorStop(1, "transparent");
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Desktop label
+    ctx.font      = `14px ${FONT}`;
+    ctx.fillStyle = "rgba(0,255,133,0.3)";
+    ctx.shadowBlur = 0;
+    ctx.fillText("OG-OS DESKTOP v1.0", 24, 28);
+
+    // Windows in focus order (back-to-front)
+    for (const id of focusOrder) {
+      const w = wins.find(w => w.id === id);
+      if (w) drawWindow(ctx, w, cw, ch - TASKBAR_H, id === focusOrder[focusOrder.length - 1]);
+    }
+
+    // Taskbar
+    drawTaskbar(ctx, wins, cw, ch, clockRef.current, hoverBtnRef.current);
+
+    // Flicker
+    const flick = 0.018 * (0.5 + 0.5 * Math.sin(t * 97.3));
+    ctx.fillStyle = `rgba(0,0,0,${flick})`;
+    ctx.fillRect(0, 0, cw, ch);
+  }, []);
+
+  // ── Mouse events ─────────────────────────────────────────────────────────
   useEffect(() => {
     const glCanvas = canvasRef.current;
     if (!glCanvas) return;
+    // Capture as non-nullable for use inside closures
+    const canvas: HTMLCanvasElement = glCanvas;
 
-    const renderer = getRenderer(glCanvas);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-
-    const scene  = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-    const off   = document.createElement("canvas");
-    off.width   = window.innerWidth;
-    off.height  = window.innerHeight;
-    const ctx   = off.getContext("2d")!;
-
-    const tex = new THREE.CanvasTexture(off);
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-
-    const mat  = createCRTMaterial(tex);
-    // Keep in sync with getPos barrel mapping below
-    const BARREL_K = 0.04;
-    mat.uniforms.u_barrel.value = BARREL_K;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(mesh);
-
-    // ── Mutable state ──────────────────────────────────────────────────────
-    const wins: WinData[] = INITIAL_WINS.map(w => ({ ...w, lines: w.lines.map(l => [...l] as [string, string]) }));
-    const focusOrder      = wins.map(w => w.id);
-    let   clock           = new Date().toLocaleTimeString();
-    let   hoverBtn: string | null = null;
-
-    // Dragging
-    let dragging: { id: string; ox: number; oy: number; startX: number; startY: number } | null = null;
+    function getCtx() { return handleRef.current?.ctx2d ?? null; }
 
     function focusWin(id: string) {
-      const i = focusOrder.indexOf(id);
-      if (i !== -1) { focusOrder.splice(i, 1); focusOrder.push(id); }
+      const fo = focusOrderRef.current;
+      const i = fo.indexOf(id);
+      if (i !== -1) { fo.splice(i, 1); fo.push(id); }
     }
 
     function closeWin(id: string) {
-      const w = wins.find(w => w.id === id);
+      const w = winsRef.current.find(w => w.id === id);
       if (w) { w.closed = true; w.openAnim = 0; }
     }
 
     function openWin(id: string) {
-      const w = wins.find(w => w.id === id);
+      const w = winsRef.current.find(w => w.id === id);
       if (w) { w.closed = false; w.openAnim = 0; focusWin(id); }
     }
 
-    // ── Clock ticker ───────────────────────────────────────────────────────
-    const clockInterval = setInterval(() => {
-      clock = new Date().toLocaleTimeString();
-    }, 1000);
-
-    // ── Draw ───────────────────────────────────────────────────────────────
-    function drawFrame(t: number) {
-      const cw = off.width;
-      const ch = off.height;
-
-      // Animate window body open
-      for (const w of wins) {
-        if (!w.closed && w.openAnim < 1) {
-          w.openAnim = Math.min(1, w.openAnim + 0.04);
-        }
-      }
-
-      ctx.fillStyle = BG;
-      ctx.fillRect(0, 0, cw, ch);
-
-      // Phosphor bloom
-      const bloom = ctx.createRadialGradient(cw / 2, ch / 2, 0, cw / 2, ch / 2, cw * 0.55);
-      bloom.addColorStop(0, "rgba(0,255,133,0.07)");
-      bloom.addColorStop(1, "transparent");
-      ctx.fillStyle = bloom;
-      ctx.fillRect(0, 0, cw, ch);
-
-      // Desktop label
-      ctx.font        = `14px ${FONT}`;
-      ctx.fillStyle   = "rgba(0,255,133,0.3)";
-      ctx.shadowBlur  = 0;
-      ctx.fillText("OG-OS DESKTOP v1.0", 24, 28);
-
-      // Windows in focus order (back-to-front)
-      for (const id of focusOrder) {
-        const w = wins.find(w => w.id === id);
-        if (w) drawWindow(ctx, w, cw, ch - TASKBAR_H, id === focusOrder[focusOrder.length - 1]);
-      }
-
-      // Taskbar
-      drawTaskbar(ctx, wins, cw, ch, clock, hoverBtn);
-
-      // Flicker
-      const flick = 0.018 * (0.5 + 0.5 * Math.sin(t * 97.3));
-      ctx.fillStyle = `rgba(0,0,0,${flick})`;
-      ctx.fillRect(0, 0, cw, ch);
-    }
-
-    // ── RAF ────────────────────────────────────────────────────────────────
-    let raf = 0;
-    let cancelled = false;
-
-    function loop(t: number) {
-      if (cancelled) return;
-      raf = requestAnimationFrame(loop);
-      ctx.clearRect(0, 0, off.width, off.height);
-      drawFrame(t * 0.001);
-      tex.needsUpdate = true;
-      mat.uniforms.u_time.value  = t * 0.001;
-      mat.uniforms.u_res.value.set(off.width, off.height);
-      renderer.render(scene, camera);
-    }
-    raf = requestAnimationFrame(loop);
-
-    // ── Mouse events ───────────────────────────────────────────────────────
     function getPos(e: MouseEvent) {
-      const rect = (glCanvas as HTMLCanvasElement).getBoundingClientRect();
-      // Map screen pixel → normalised UV → apply barrel to get logical canvas coordinate
+      const ctx2d = getCtx();
+      if (!ctx2d) return { x: 0, y: 0 };
+      const rect = canvas.getBoundingClientRect();
       const sx = (e.clientX - rect.left) / rect.width;
       const sy = (e.clientY - rect.top)  / rect.height;
       const cx = sx - 0.5, cy = sy - 0.5;
       const r2 = cx * cx + cy * cy;
-      const lx = 0.5 + cx * (1.0 + BARREL_K * r2);
-      const ly = 0.5 + cy * (1.0 + BARREL_K * r2);
-      return { x: lx * off.width, y: ly * off.height };
+      return {
+        x: (0.5 + cx * (1.0 + BARREL_K * r2)) * ctx2d.canvas.width,
+        y: (0.5 + cy * (1.0 + BARREL_K * r2)) * ctx2d.canvas.height,
+      };
     }
 
     function onMouseMove(e: MouseEvent) {
       const { x, y } = getPos(e);
+      const ctx2d = getCtx();
+      if (!ctx2d) return;
+      const cw = ctx2d.canvas.width;
+      const ch = ctx2d.canvas.height;
 
-      if (dragging) {
-        const dx = x - dragging.startX;
-        const dy = y - dragging.startY;
-        const w  = wins.find(w => w.id === dragging!.id);
+      const drag = draggingRef.current;
+      if (drag) {
+        const dx = x - drag.startX;
+        const dy = y - drag.startY;
+        const w  = winsRef.current.find(w => w.id === drag.id);
         if (w) {
           if (w.centered) {
-            // Convert from centered to absolute on first drag
-            const cw = off.width;
-            const ch = off.height - TASKBAR_H;
-            const ww = winWidth(ctx, w);
-            const wh = TITLEBAR_H + w.lines.length * LINE_H + WIN_PAD * 2;
-            dragging!.ox = (cw - ww) / 2;
-            dragging!.oy = (ch - wh) / 2;
-            w.x = dragging!.ox + dx;
-            w.y = dragging!.oy + dy;
+            const ww  = winWidth(ctx2d, w);
+            const wh  = TITLEBAR_H + w.lines.length * LINE_H + WIN_PAD * 2;
+            const newOx = (cw - ww) / 2;
+            const newOy = ((ch - TASKBAR_H) - wh) / 2;
+            draggingRef.current = { ...drag, ox: newOx, oy: newOy };
+            w.x = newOx + dx;
+            w.y = newOy + dy;
             w.centered = false;
           } else {
-            w.x = dragging.ox + dx;
-            w.y = dragging.oy + dy;
+            w.x = drag.ox + dx;
+            w.y = drag.oy + dy;
           }
         }
         return;
       }
 
-      // Hover over taskbar buttons
-      const rects = taskbarButtonRects(ctx, wins, off.width, off.height);
-      const hit   = rects.find(r => inRect(x, y, r));
-      hoverBtn = hit ? hit.id : null;
+      const rects = taskbarButtonRects(ctx2d, winsRef.current, cw, ch);
+      hoverBtnRef.current = rects.find(r => inRect(x, y, r))?.id ?? null;
     }
 
     function onMouseDown(e: MouseEvent) {
       if (e.button !== 0) return;
       const { x, y } = getPos(e);
-      const cw = off.width;
-      const ch = off.height;
+      const ctx2d = getCtx();
+      if (!ctx2d) return;
+      const wins = winsRef.current;
+      const fo   = focusOrderRef.current;
+      const cw   = ctx2d.canvas.width;
+      const ch   = ctx2d.canvas.height;
 
-      // Check close buttons (top priority, back-to-front reversed)
-      for (let fi = focusOrder.length - 1; fi >= 0; fi--) {
-        const id = focusOrder[fi];
+      // Check close buttons (highest priority, front-to-back)
+      for (let fi = fo.length - 1; fi >= 0; fi--) {
+        const id = fo[fi];
         const w  = wins.find(w => w.id === id);
         if (!w || w.closed) continue;
-        const cr = closeButtonRect(ctx, w, cw, ch - TASKBAR_H);
-        if (inRect(x, y, cr)) { closeWin(id); return; }
+        if (inRect(x, y, closeButtonRect(ctx2d, w, cw, ch - TASKBAR_H))) { closeWin(id); return; }
       }
 
-      // Check title bars for drag
-      for (let fi = focusOrder.length - 1; fi >= 0; fi--) {
-        const id = focusOrder[fi];
+      // Check title bars for drag / window focus click
+      for (let fi = fo.length - 1; fi >= 0; fi--) {
+        const id = fo[fi];
         const w  = wins.find(w => w.id === id);
         if (!w || w.closed) continue;
-        const tr = titlebarRect(ctx, w, cw, ch - TASKBAR_H);
+        const tr = titlebarRect(ctx2d, w, cw, ch - TASKBAR_H);
         if (inRect(x, y, tr)) {
           focusWin(id);
-          dragging = { id, ox: w.x, oy: w.y, startX: x, startY: y };
-          (glCanvas as HTMLCanvasElement).style.cursor = "grabbing";
+          draggingRef.current = { id, ox: w.x, oy: w.y, startX: x, startY: y };
+          canvas.style.cursor = "grabbing";
           return;
         }
-        // Click anywhere in window — just focus
-        const { x: wx, y: wy, w: ww } = winRect(ctx, w, cw, ch - TASKBAR_H);
-        const totalH = TITLEBAR_H + winBodyHeight(w, w.openAnim);
-        if (inRect(x, y, { x: wx, y: wy, w: ww, h: totalH })) {
-          focusWin(id);
-          return;
+        const { x: wx, y: wy, w: ww } = winRect(ctx2d, w, cw, ch - TASKBAR_H);
+        if (inRect(x, y, { x: wx, y: wy, w: ww, h: TITLEBAR_H + winBodyHeight(w, w.openAnim) })) {
+          focusWin(id); return;
         }
       }
 
       // Taskbar button click
-      const rects = taskbarButtonRects(ctx, wins, cw, ch);
+      const rects = taskbarButtonRects(ctx2d, wins, cw, ch);
       const hit   = rects.find(r => inRect(x, y, r));
       if (hit) {
         const w = wins.find(w => w.id === hit.id);
-        if (w) {
-          if (!w.closed) closeWin(hit.id);
-          else openWin(hit.id);
-        }
+        if (w) { if (!w.closed) closeWin(hit.id); else openWin(hit.id); }
       }
     }
 
-    function onMouseUp() {
-      dragging = null;
-      (glCanvas as HTMLCanvasElement).style.cursor = "";
-    }
+    function onMouseUp()    { draggingRef.current = null; canvas.style.cursor = ""; }
+    function onMouseLeave() { hoverBtnRef.current = null; }
 
-    function onMouseLeave() {
-      hoverBtn = null;
-    }
-
-    glCanvas.addEventListener("mousemove",  onMouseMove);
-    glCanvas.addEventListener("mousedown",  onMouseDown);
-    glCanvas.addEventListener("mouseup",    onMouseUp);
-    glCanvas.addEventListener("mouseleave", onMouseLeave);
-
-    // ── Resize ────────────────────────────────────────────────────────────
-    function onResize() {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      renderer.setSize(w, h);
-      off.width  = w;
-      off.height = h;
-    }
-    window.addEventListener("resize", onResize);
+    canvas.addEventListener("mousemove",  onMouseMove);
+    canvas.addEventListener("mousedown",  onMouseDown);
+    canvas.addEventListener("mouseup",    onMouseUp);
+    canvas.addEventListener("mouseleave", onMouseLeave);
 
     return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      clearInterval(clockInterval);
-      glCanvas.removeEventListener("mousemove",  onMouseMove);
-      glCanvas.removeEventListener("mousedown",  onMouseDown);
-      glCanvas.removeEventListener("mouseup",    onMouseUp);
-      glCanvas.removeEventListener("mouseleave", onMouseLeave);
-      window.removeEventListener("resize", onResize);
-      tex.dispose();
-      mat.dispose();
-      mesh.geometry.dispose();
-      renderer.dispose();
+      canvas.removeEventListener("mousemove",  onMouseMove);
+      canvas.removeEventListener("mousedown",  onMouseDown);
+      canvas.removeEventListener("mouseup",    onMouseUp);
+      canvas.removeEventListener("mouseleave", onMouseLeave);
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <CRTScreen>

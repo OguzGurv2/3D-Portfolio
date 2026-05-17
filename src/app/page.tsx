@@ -1,12 +1,19 @@
-import { headers } from "next/headers";
-import DesktopPage from "@/(desktop)/page";
-import MobilePage from "@/(mobile)/page";
+"use client";
 
-export default async function Root() {
-  const headersList = await headers();
-  const ua = headersList.get("user-agent") ?? "";
+import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 
-  const isMobile = /android|iphone|ipad|ipod|mobile|blackberry|opera mini|iemobile/i.test(ua);
+const DesktopPage = dynamic(() => import("@/(desktop)/page"), { ssr: false });
+const MobilePage  = dynamic(() => import("@/(mobile)/page"),  { ssr: false });
 
+export default function Root() {
+  // null = not yet determined (avoids hydration mismatch)
+  const [isMobile, setIsMobile] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    setIsMobile(window.innerWidth < 768);
+  }, []);
+
+  if (isMobile === null) return null;
   return isMobile ? <MobilePage /> : <DesktopPage />;
 }

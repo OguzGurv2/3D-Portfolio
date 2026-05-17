@@ -9,6 +9,7 @@
  *   - CRT flicker
  */
 import * as THREE from "three";
+import { BARREL_K } from "../../_constants/crt";
 
 export const CRT_VERT = /* glsl */ `
 varying vec2 vUv;
@@ -84,7 +85,7 @@ export function createCRTMaterial(texture: THREE.CanvasTexture): THREE.ShaderMat
       u_tex:    { value: texture },
       u_res:    { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
       u_time:   { value: 0 },
-      u_barrel: { value: 0.04 },
+      u_barrel: { value: BARREL_K },
       u_scan:   { value: 0.35 },
       u_vign:   { value: 0.25 },
       u_chroma: { value: 0.0018 },
