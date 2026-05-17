@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import CRTScreen from "./BackgroundScreen";
+/**
+ * LoginScreen — Three.js / WebGL version.
+ *
+ * State machine (boot → show → type → auth) drives Canvas 2D draw calls.
+ * The offscreen canvas feeds the CRT barrel shader as a CanvasTexture.
+ */
+
+import { useState, useEffect, useRef } from "react";
+import { getRenderer } from "./three/renderer";
+import { createCRTMaterial } from "./three/CRTMaterial";
+import CRTScreen from "./CRTScreen";
+import * as THREE from "three";
 
 const SYSTEM_LINES = [
   "OG-OS  v1.0.0  [Build 2004]",
@@ -87,70 +97,186 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
     return () => clearTimeout(t);
   }, [phase, authIndex, onLogin]);
 
-  const showCursor = phase === "type";
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // ── Canvas 2D draw ──────────────────────────────────────────────────────
+  const stateRef = useRef({ phase, bootLine, typedUser, typedPass, authIndex });
+  useEffect(() => {
+    stateRef.current = { phase, bootLine, typedUser, typedPass, authIndex };
+  });
+
+  // ── Three.js CRT render loop ─────────────────────────────────────────────
+  useEffect(() => {
+    const glCanvas = canvasRef.current;
+    if (!glCanvas) return;
+
+    const renderer = getRenderer(glCanvas);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const scene  = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    const off   = document.createElement("canvas");
+    off.width   = window.innerWidth;
+    off.height  = window.innerHeight;
+    const ctx   = off.getContext("2d")!;
+
+    const tex = new THREE.CanvasTexture(off);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+
+    const mat  = createCRTMaterial(tex);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    scene.add(mesh);
+
+    const ACCENT   = "#00ff85";
+    const ACCENT60 = "rgba(0,255,133,0.6)";
+    const ACCENT70 = "rgba(0,255,133,0.7)";
+    const ACCENT40 = "rgba(0,255,133,0.4)";
+    const BG       = "#0c0c0c";
+    const FONT     = "VT323, monospace";
+
+    function draw(t: number) {
+      const w = off.width;
+      const h = off.height;
+      const { phase: ph, bootLine: bl, typedUser: tu, typedPass: tp, authIndex: ai } = stateRef.current;
+
+      const cx    = w / 2;
+      const panelW = Math.min(560, w * 0.9);
+      const panelX = cx - panelW / 2;
+      const lh    = Math.round(h * 0.036);
+      const sz17  = Math.round(h * 0.030);
+      const sz20  = Math.round(h * 0.035);
+      const blink = Math.floor(t * 1.4) % 2 === 0;
+
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      // Phosphor bloom
+      const bloom = ctx.createRadialGradient(cx, h / 2, 0, cx, h / 2, w * 0.55);
+      bloom.addColorStop(0, "rgba(0,255,133,0.07)");
+      bloom.addColorStop(1, "transparent");
+      ctx.fillStyle = bloom;
+      ctx.fillRect(0, 0, w, h);
+
+      // ── Boot log box ─────────────────────────────────────
+      const boxY  = Math.round(h * 0.28);
+      const boxPx = Math.round(panelW * 0.045);
+      const boxPy = Math.round(lh * 0.5);
+
+      ctx.strokeStyle = "rgba(0,255,133,0.4)";
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(panelX, boxY, panelW, (SYSTEM_LINES.length + 1) * lh + boxPy * 2);
+
+      ctx.font        = `${sz17}px ${FONT}`;
+      ctx.fillStyle   = ACCENT;
+      ctx.shadowBlur  = 8;
+      ctx.shadowColor = "rgba(0,255,133,0.3)";
+
+      for (let i = 0; i < bl; i++) {
+        const line = SYSTEM_LINES[i];
+        ctx.fillText(line || "", panelX + boxPx, boxY + boxPy + (i + 1) * lh);
+      }
+
+      if (ph === "boot" && blink) {
+        ctx.fillText("█", panelX + boxPx, boxY + boxPy + (bl + 1) * lh);
+      }
+      ctx.shadowBlur = 0;
+
+      // ── Login section ────────────────────────────────────
+      if (ph !== "boot") {
+        const loginY = boxY + (SYSTEM_LINES.length + 2) * lh + boxPy * 2 + Math.round(lh * 0.8);
+
+        ctx.font        = `${sz20}px ${FONT}`;
+        ctx.fillStyle   = ACCENT60;
+        ctx.shadowBlur  = 6;
+        ctx.shadowColor = "rgba(0,255,133,0.3)";
+        ctx.fillText("\u2500\u2500 USER IDENTIFICATION \u2500\u2500", panelX, loginY);
+        ctx.shadowBlur  = 0;
+
+        const row1Y = loginY + lh * 1.8;
+        const row2Y = row1Y + lh * 1.4;
+        const labelW = Math.round(panelW * 0.23);
+
+        // Username
+        ctx.font      = `${sz20}px ${FONT}`;
+        ctx.fillStyle = ACCENT70;
+        ctx.fillText("USERNAME", panelX, row1Y);
+        ctx.fillStyle = ACCENT40;
+        ctx.fillText(":", panelX + labelW, row1Y);
+        ctx.fillStyle = ACCENT;
+        ctx.shadowBlur  = 8;
+        ctx.shadowColor = "rgba(0,255,133,0.3)";
+        ctx.fillText(tu, panelX + labelW + Math.round(lh * 0.6), row1Y);
+        if (ph === "type" && tu.length < USERNAME.length && blink) {
+          ctx.fillText("█", panelX + labelW + Math.round(lh * 0.6) + ctx.measureText(tu).width, row1Y);
+        }
+
+        // Password
+        ctx.fillStyle = ACCENT70;
+        ctx.shadowBlur = 0;
+        ctx.fillText("PASSWORD", panelX, row2Y);
+        ctx.fillStyle = ACCENT40;
+        ctx.fillText(":", panelX + labelW, row2Y);
+        ctx.fillStyle = ACCENT;
+        ctx.shadowBlur  = 8;
+        ctx.fillText(tp, panelX + labelW + Math.round(lh * 0.6), row2Y);
+        if (ph === "type" && tu.length >= USERNAME.length && tp.length < PASSWORD.length && blink) {
+          ctx.fillText("█", panelX + labelW + Math.round(lh * 0.6) + ctx.measureText(tp).width, row2Y);
+        }
+        ctx.shadowBlur = 0;
+
+        // Auth message
+        if (ph === "auth") {
+          ctx.font        = `${sz17}px ${FONT}`;
+          ctx.fillStyle   = ACCENT;
+          ctx.shadowBlur  = 8;
+          ctx.shadowColor = "rgba(0,255,133,0.3)";
+          ctx.fillText(AUTH_MESSAGES[ai], panelX, row2Y + lh * 1.6);
+          ctx.shadowBlur  = 0;
+        }
+      }
+    }
+
+    let raf = 0;
+    let cancelled = false;
+
+    function loop(t: number) {
+      if (cancelled) return;
+      raf = requestAnimationFrame(loop);
+      ctx.clearRect(0, 0, off.width, off.height);
+      draw(t * 0.001);
+      tex.needsUpdate = true;
+      mat.uniforms.u_time.value = t * 0.001;
+      mat.uniforms.u_res.value.set(off.width, off.height);
+      renderer.render(scene, camera);
+    }
+    raf = requestAnimationFrame(loop);
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      renderer.setSize(w, h);
+      off.width  = w;
+      off.height = h;
+    }
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+      tex.dispose();
+      mat.dispose();
+      mesh.geometry.dispose();
+      renderer.dispose();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <CRTScreen>
-      <div className="flex h-full w-full items-center justify-center">
-      <div className="w-[min(560px,90vw)] font-[var(--font-body),monospace] text-accent-green [text-shadow:0_0_4px_var(--color-accent-green),0_0_10px_rgba(0,255,133,0.25)]">
-
-        {/* Boot log */}
-        <div className="mb-6 border border-accent-green/40 px-5 py-3 text-[17px] leading-7">
-          {SYSTEM_LINES.slice(0, bootLine).map((line, i) => (
-            <p key={i} className="min-h-[1.75em] animate-[text-glitch-idle_5s_ease-in-out_infinite] tracking-wide">
-              {line || "\u00a0"}
-            </p>
-          ))}
-          {phase === "boot" && (
-            <span className="animate-[blink_0.7s_steps(1,end)_infinite]">█</span>
-          )}
-        </div>
-
-        {/* Login rows — appear after boot, both visible before typing starts */}
-        {phase !== "boot" && (
-          <div className="space-y-4 text-[20px]">
-            <p className="mb-5 animate-[text-glitch-idle_5s_ease-in-out_infinite] tracking-[0.2em] text-accent-green/60">
-              ── USER IDENTIFICATION ──
-            </p>
-
-            {/* Username row */}
-            <div className="flex items-center gap-3">
-              <span className="w-28 shrink-0 animate-[text-glitch-idle_5s_ease-in-out_infinite] tracking-widest text-accent-green/70">
-                USERNAME
-              </span>
-              <span className="text-accent-green/40">:</span>
-              <span className="animate-[text-glitch-idle_5s_ease-in-out_infinite]">
-                {typedUser}
-                {phase === "type" && typedUser.length < USERNAME.length && (
-                  <span className="animate-[blink_0.6s_steps(1,end)_infinite]">█</span>
-                )}
-              </span>
-            </div>
-
-            {/* Password row — appears at the same time as username */}
-            <div className="flex items-center gap-3">
-              <span className="w-28 shrink-0 animate-[text-glitch-idle_5s_ease-in-out_infinite] tracking-widest text-accent-green/70">
-                PASSWORD
-              </span>
-              <span className="text-accent-green/40">:</span>
-              <span className="animate-[text-glitch-idle_5s_ease-in-out_infinite] tracking-[0.3em]">
-                {typedPass}
-                {phase === "type" && typedUser.length >= USERNAME.length && typedPass.length < PASSWORD.length && (
-                  <span className="animate-[blink_0.6s_steps(1,end)_infinite]">█</span>
-                )}
-              </span>
-            </div>
-
-            {/* Auth messages */}
-            {phase === "auth" && (
-              <p className="animate-[text-glitch-idle_5s_ease-in-out_infinite] pt-3 text-[18px] tracking-widest">
-                {AUTH_MESSAGES[authIndex]}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-      </div>
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </CRTScreen>
   );
 }
